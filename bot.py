@@ -132,15 +132,17 @@ async def lookup_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # ignore other messages
             return
 
-    # perform telethon lookup
-    try:
-        full = await tele_client(GetFullUserRequest(query))
-        u = full.user
-        card = format_user_card(u)
-        await m.reply_text(f"📋 *User Information*\n\n{card}", parse_mode="Markdown")
-    except Exception as e:
-        await m.reply_text(f"❌ Error: {e}")
+    # --- perform telethon lookup ---
+try:
+    full = await tele_client(GetFullUserRequest(query))
+    # Safely get user object: if `full` has attribute 'user' use it, otherwise assume full is the user
+    u = getattr(full, "user", full)
 
+    card = format_user_card(u)
+    await m.reply_text(f"📋 *User Information*\n\n{card}", parse_mode="Markdown")
+
+except Exception as e:
+    await m.reply_text(f"❌ Error: {e}")
 async def main():
     # start telethon
     await tele_client.start()
