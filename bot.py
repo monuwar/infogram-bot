@@ -12,38 +12,33 @@ from telethon.tl.functions.users import GetFullUserRequest
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
-# --- ENV ---
+# === Environment Variables ===
 API_ID = int(os.getenv("API_ID"))
 API_HASH = os.getenv("API_HASH")
 SESSION = os.getenv("SESSION")
-BOT_TOKEN = os.getenv("BOT_TOKEN")  # BotFather token
+BOT_TOKEN = os.getenv("BOT_TOKEN")
 TIMEZONE = os.getenv("TIMEZONE", "Asia/Dhaka")
 BOT_NAME = os.getenv("BOT_NAME", "InfoGram BOT")
 DEVELOPER = os.getenv("DEVELOPER", "@Luizzsec")
 DESCRIPTION = os.getenv("DESCRIPTION", "A Telegram bot that shows public profile details of any user.")
 LANG = os.getenv("LANG", "English")
 
-# --- Telethon client for lookups ---
+# === Telethon Client ===
 tele_client = TelegramClient(StringSession(SESSION), API_ID, API_HASH)
 
-# --- Helpers ---
+# === Helper Functions ===
 def fmt_name(user_obj):
     first = getattr(user_obj, "first_name", "") or ""
     last = getattr(user_obj, "last_name", "") or ""
     return ((first + (" " + last if last else "")).strip()) or "N/A"
 
-def format_user_card(u):
-    """
-    Return nicely formatted profile card string for a Telethon user object `u`.
-    Works whether `u` is a User or a UserFull (safely extracts the inner User).
-    """
-    # if u is a UserFull (has attribute 'user'), use that inner user object
-    user_obj = getattr(u, "user", u)
 
+def format_user_card(u):
+    """Handles both User and UserFull types safely"""
+    user_obj = getattr(u, "user", u)
     tz = pytz.timezone(TIMEZONE)
     now = datetime.now(tz).strftime("%Y-%m-%d %H:%M")
 
-    # safe attribute getters from the actual user object
     uid = getattr(user_obj, "id", "N/A")
     username = getattr(user_obj, "username", None)
     photo = getattr(user_obj, "photo", None)
@@ -59,7 +54,6 @@ def format_user_card(u):
     except Exception:
         status = "Hidden"
 
-    # Registered On / Account Age: NOT reliably available via Telegram API -> N/A / best-effort
     registered_on = "N/A"
     account_age = "N/A"
 
@@ -80,15 +74,14 @@ def format_user_card(u):
     ]
     return "\n".join(f"- {line}" for line in card_lines)
 
-# --- Bot handlers (python-telegram-bot async) ---
+
+# === Handlers ===
 async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
-    # Try to get more details about the requester via telethon (best-effort)
     try:
         full = await tele_client(GetFullUserRequest(user.id))
         u = getattr(full, "user", full)
     except Exception:
-        # fallback to basic info from the incoming update
         class Simple:
             id = user.id
             first_name = user.first_name
@@ -98,11 +91,10 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         u = Simple()
 
     card = format_user_card(u)
-
     text = (
         f"👋 Hello {user.first_name or 'User'}!\n\n"
         f"Welcome to *{BOT_NAME}* 🕵️‍♂️\n\n"
-        f"📋 *User Information*\n\n"
+        f"📋 *Your Profile Info:*\n\n"
         f"{card}\n\n"
         f"🧠 *How to use:*\n"
         f"• Send a username like `@example` or `t.me/example`\n"
@@ -110,18 +102,17 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"💻 Developer: {DEVELOPER}\n\n"
         f"⚠️ This bot only displays *public* information available on Telegram."
     )
-
-    # Help text included in start message as requested
     await update.message.reply_text(text, parse_mode="Markdown")
+
 
 async def lookup_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     m = update.message
     if not m:
         return
-    text = (m.text or "").strip()
 
-    # handle forwarded message (prefer forwarded sender)
+    text = (m.text or "").strip()
     query = None
+
     if m.forward_from or m.forward_from_message_id:
         target = m.forward_from or m.forward_from_chat
         if hasattr(target, "id"):
@@ -130,7 +121,6 @@ async def lookup_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await m.reply_text("Could not determine forwarded user.")
             return
     else:
-        # Accept @username or t.me/username or numeric ID
         if text.startswith("@"):
             query = text[1:].split()[0]
         elif "t.me/" in text:
@@ -138,37 +128,30 @@ async def lookup_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif text.isdigit():
             query = text
         else:
-            # ignore other messages
             return
 
-    # --- perform telethon lookup (inside async handler) ---
     try:
         full = await tele_client(GetFullUserRequest(query))
         u = getattr(full, "user", full)
-
         card = format_user_card(u)
         await m.reply_text(f"📋 *User Information*\n\n{card}", parse_mode="Markdown")
     except Exception as e:
-        # send a readable error message (don't leak internal stack)
         await m.reply_text(f"❌ Error: {str(e)}")
 
-# --- main: start telethon and PTB application ---
-async def main():
-    # start telethon
-    await tele_client.start()
-    print("Telethon client started.")
 
-    # start python-telegram-bot Application
+# === Main Function ===
+async def run_bot():
+    await tele_client.start()
+    print("✅ Telethon client started.")
+
     application = Application.builder().token(BOT_TOKEN).build()
     application.add_handler(CommandHandler("start", start_handler))
-    # message handler: text messages (excluding commands)
-    application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), lookup_handler))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, lookup_handler))
 
-    print("Starting Telegram Bot (Bot API)...")
-    # run polling (async)
-    await application.run_polling()
+    print("🤖 Telegram Bot running...")
+    await application.run_polling(close_loop=False)
+
 
 if __name__ == "__main__":
-    # prevent "Cannot close a running event loop" on hosting platforms
     nest_asyncio.apply()
-    asyncio.get_event_loop().run_until_complete(main())
+    asyncio.run(run_bot())
