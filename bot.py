@@ -27,31 +27,35 @@ LANG = os.getenv("LANG", "English")
 tele_client = TelegramClient(StringSession(SESSION), API_ID, API_HASH)
 
 # --- Helpers ---
-def fmt_name(u):
-    return ((u.first_name or "") + (" " + (u.last_name or "") if getattr(u, "last_name", None) else "")).strip()
-
-def safe_attr(obj, attr, default="No"):
-    return getattr(obj, attr, default)
+def fmt_name(user_obj):
+    first = getattr(user_obj, "first_name", "") or ""
+    last = getattr(user_obj, "last_name", "") or ""
+    return ((first + (" " + last if last else "")).strip()) or "N/A"
 
 def format_user_card(u):
     """
     Return nicely formatted profile card string for a Telethon user object `u`.
-    Note: exact 'Registered On' is not publicly available from Telegram API,
-    so we show 'N/A' there. Account Age also best-effort (N/A if unknown).
+    Works whether `u` is a User or a UserFull (safely extracts the inner User).
     """
+    # if u is a UserFull (has attribute 'user'), use that inner user object
+    user_obj = getattr(u, "user", u)
+
     tz = pytz.timezone(TIMEZONE)
     now = datetime.now(tz).strftime("%Y-%m-%d %H:%M")
 
-    # DC (if photo exists)
-    dc = getattr(getattr(u, "photo", None), "dc_id", "N/A")
-    # Premium detection (best-effort)
-    premium = "Yes" if getattr(u, "premium", False) else "No"
-    photos = "Set" if getattr(u, "photo", None) else "No"
-    scam = "Yes" if getattr(u, "scam", False) else "No"
-    fake = "Yes" if getattr(u, "fake", False) else "No"
+    # safe attribute getters from the actual user object
+    uid = getattr(user_obj, "id", "N/A")
+    username = getattr(user_obj, "username", None)
+    photo = getattr(user_obj, "photo", None)
+    premium = "Yes" if getattr(user_obj, "premium", False) else "No"
+    scam = "Yes" if getattr(user_obj, "scam", False) else "No"
+    fake = "Yes" if getattr(user_obj, "fake", False) else "No"
+    dc = getattr(getattr(user_obj, "photo", None), "dc_id", "N/A")
+
     status = "Hidden"
     try:
-        status = type(getattr(u, "status", None)).__name__ if getattr(u, "status", None) else "Hidden"
+        st = getattr(user_obj, "status", None)
+        status = type(st).__name__ if st else "Hidden"
     except Exception:
         status = "Hidden"
 
@@ -60,13 +64,13 @@ def format_user_card(u):
     account_age = "N/A"
 
     card_lines = [
-        f"ID: `{u.id}`",
-        f"Name: {fmt_name(u) or 'N/A'}",
-        f"Username: @{u.username if getattr(u, 'username', None) else 'Not set'}",
+        f"ID: `{uid}`",
+        f"Name: {fmt_name(user_obj)}",
+        f"Username: @{username if username else 'Not set'}",
         f"Premium: {premium}",
         f"Fake Label: {fake}",
         f"Scam Label: {scam}",
-        f"Photos: {photos}",
+        f"Photos: {'Set' if photo else 'No'}",
         f"Status: {status}",
         f"DC: {dc}",
         f"Account Age: {account_age}",
@@ -107,11 +111,13 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"⚠️ This bot only displays *public* information available on Telegram."
     )
 
-    # Help is included inside start text (as requested)
+    # Help text included in start message as requested
     await update.message.reply_text(text, parse_mode="Markdown")
 
 async def lookup_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     m = update.message
+    if not m:
+        return
     text = (m.text or "").strip()
 
     # handle forwarded message (prefer forwarded sender)
@@ -143,7 +149,8 @@ async def lookup_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         card = format_user_card(u)
         await m.reply_text(f"📋 *User Information*\n\n{card}", parse_mode="Markdown")
     except Exception as e:
-        await m.reply_text(f"❌ Error: {e}")
+        # send a readable error message (don't leak internal stack)
+        await m.reply_text(f"❌ Error: {str(e)}")
 
 # --- main: start telethon and PTB application ---
 async def main():
